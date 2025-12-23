@@ -798,14 +798,15 @@ class ProfessionalInvoiceBuilder:
             self.add_item_row_to_table(item, self.current_serial)
     
     def add_totals_section(self, bill_data, cursor=None):
-        """Add totals section with support for return fee - ONLY ON LAST PAGE"""
+        """Add totals section with dynamic support for return/exchange - ONLY ON LAST PAGE"""
         if cursor is None:
             cursor = self.cursor
         
         subtotal = bill_data.get('subtotal', 0)
         discount = bill_data.get('discount', 0)
-        return_amount = bill_data.get('return_amount', 0)  # NEW: Get return amount
-        return_fee = bill_data.get('return_fee', 0)        # NEW: Get return fee
+        return_amount = bill_data.get('return_amount', 0)   # Negative for returns
+        exchange_amount = bill_data.get('exchange_amount', 0) # Positive for exchanges
+        return_fee = bill_data.get('return_fee', 0)         # From settings
         grand_total = bill_data.get('grand_total', subtotal)
         
         cursor.movePosition(QTextCursor.MoveOperation.End)
@@ -817,16 +818,35 @@ class ProfessionalInvoiceBuilder:
         )
         cursor.insertBlock(block_format)
         
-        # Calculate number of rows needed
-        row_count = 3  # Base: subtotal, discount, grand_total
+        # --- DYNAMIC ROW CALCULATION & ORDER ---
+        # SUBTOTAL is always first, GRAND TOTAL is always last.
+        rows_to_display = []
         
+        # 1. Always add SUBTOTAL
+        rows_to_display.append(('SUBTOTAL', subtotal, 'value', False))
+        
+        # 2. Conditionally add DISCOUNT (if not zero)
+        if discount != 0:
+            rows_to_display.append(('DISCOUNT', discount, 'value', False))
+        
+        # 3. Conditionally add RETURN AMOUNT (for Return/Exchange documents)
         if return_amount != 0:
-            row_count += 1  # Add row for return amount
+            # Format: Label is "RETURN AMOUNT", value is negative
+            rows_to_display.append(('RETURN AMOUNT', return_amount, 'return', False))
         
-        if return_fee > 0:
-            row_count += 1  # Add row for return fee
+        # 4. Conditionally add EXCHANGE AMOUNT (for Exchange documents)
+        if exchange_amount != 0:
+            rows_to_display.append(('EXCHANGE AMOUNT', exchange_amount, 'value', False))
         
-        # Create totals table
+        # 5. Conditionally add RETURN FEE (KEY CHANGE: Only for Return documents)
+        # Show fee only if there is an actual return amount.
+        if return_amount != 0 and return_fee > 0:
+            rows_to_display.append(('RETURN FEE', return_fee, 'value', False))
+        
+        # 6. Always add GRAND TOTAL (with top margin for visual separation)
+        rows_to_display.append(('GRAND TOTAL', grand_total, 'grand', True)) # True = extra margin
+        
+        # --- CREATE THE DYNAMIC TABLE ---
         table_format = QTextTableFormat()
         table_format.setBorder(0)
         table_format.setCellSpacing(0)
@@ -837,83 +857,44 @@ class ProfessionalInvoiceBuilder:
             QTextLength(QTextLength.Type.PercentageLength, 60)
         ])
         
-        # Create table with dynamic row count
-        table = cursor.insertTable(row_count, 2, table_format)
+        # Create table with the exact number of rows we need
+        table = cursor.insertTable(len(rows_to_display), 2, table_format)
         
         # Format definitions
         label_format = self._create_char_format(self.config.TOTALS_LABEL_FONT_SIZE, bold=True)
         value_format = self._create_char_format(self.config.TOTALS_VALUE_FONT_SIZE)
         grand_format = self._create_char_format(self.config.GRAND_TOTAL_FONT_SIZE, bold=True)
-        return_format = self._create_char_format(self.config.TOTALS_VALUE_FONT_SIZE)  # Special format for return
+        return_format = self._create_char_format(self.config.TOTALS_VALUE_FONT_SIZE)
         
-        # Track current row
-        current_row = 0
-        
-        # SUBTOTAL row
-        cell = table.cellAt(current_row, 0).firstCursorPosition()
-        cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignLeft))
-        cell.insertText("SUBTOTAL", label_format)
-        
-        cell = table.cellAt(current_row, 1).firstCursorPosition()
-        cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignRight))
-        cell.insertText(self.format_currency(subtotal), value_format)
-        current_row += 1
-        
-        # DISCOUNT row (if any)
-        if discount != 0:
-            cell = table.cellAt(current_row, 0).firstCursorPosition()
-            cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignLeft))
-            cell.insertText("DISCOUNT", label_format)
+        for row_index, (label, value, style, add_top_margin) in enumerate(rows_to_display):
+            # Label Cell
+            cell = table.cellAt(row_index, 0).firstCursorPosition()
+            cell.setBlockFormat(self._create_block_format(
+                Qt.AlignmentFlag.AlignLeft,
+                top_margin=5 if add_top_margin else 0,
+                bottom_margin=2 if add_top_margin else 0
+            ))
+            cell.insertText(label, label_format)
             
-            cell = table.cellAt(current_row, 1).firstCursorPosition()
-            cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignRight))
-            cell.insertText(self.format_currency(discount), value_format)
-            current_row += 1
-        
-        # RETURN AMOUNT row (if any)
-        if return_amount != 0:
-            cell = table.cellAt(current_row, 0).firstCursorPosition()
-            cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignLeft))
-            cell.insertText("RETURN AMOUNT", label_format)
+            # Value Cell
+            cell = table.cellAt(row_index, 1).firstCursorPosition()
+            cell.setBlockFormat(self._create_block_format(
+                Qt.AlignmentFlag.AlignRight,
+                top_margin=5 if add_top_margin else 0,
+                bottom_margin=2 if add_top_margin else 0
+            ))
             
-            cell = table.cellAt(current_row, 1).firstCursorPosition()
-            cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignRight))
-            
-            # Display negative return amount
-            return_value = f"-{self.format_currency(abs(return_amount))}"
-            cell.insertText(return_value, return_format)
-            current_row += 1
-        
-        # RETURN FEE row (if any)
-        if return_fee > 0:
-            cell = table.cellAt(current_row, 0).firstCursorPosition()
-            cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignLeft))
-            cell.insertText("RETURN FEE", label_format)
-            
-            cell = table.cellAt(current_row, 1).firstCursorPosition()
-            cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignRight))
-            cell.insertText(self.format_currency(return_fee), value_format)
-            current_row += 1
-        
-        # GRAND TOTAL row
-        cell = table.cellAt(current_row, 0).firstCursorPosition()
-        cell.setBlockFormat(self._create_block_format(
-            Qt.AlignmentFlag.AlignLeft, 
-            top_margin=5, 
-            bottom_margin=2
-        ))
-        cell.insertText("GRAND TOTAL", grand_format)
-        
-        cell = table.cellAt(current_row, 1).firstCursorPosition()
-        cell.setBlockFormat(self._create_block_format(
-            Qt.AlignmentFlag.AlignRight, 
-            top_margin=5, 
-            bottom_margin=2
-        ))
-        cell.insertText(self.format_currency(grand_total), grand_format)
+            if style == 'grand':
+                cell.insertText(self.format_currency(value), grand_format)
+            elif style == 'return':
+                # Display return amount as a negative number
+                return_value = f"-{self.format_currency(abs(value))}"
+                cell.insertText(return_value, return_format)
+            else:  # 'value' style
+                cell.insertText(self.format_currency(value), value_format)
         
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        # Add separator line between bill info and invoice table
+        # Add separator line
         self.add_horizontal_line(cursor, line_width=76)
     
     def add_terms_and_conditions(self, bill_data=None, cursor=None):
