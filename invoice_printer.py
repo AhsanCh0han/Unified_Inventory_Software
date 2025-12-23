@@ -78,20 +78,22 @@ class InvoiceConfig:
     # Colors
     FOOTER_COLOR = QColor(128, 128, 128)
     THANK_YOU_COLOR = QColor(128, 128, 128)
+    # NEW: Return fee settings
 
-    # Terms and conditions
+
+    DEFAULT_RETURN_FEE = 100
+    RETURN_FEE_PER_PAGE = False
+    
     # Terms and conditions
     TERMS_AND_CONDITIONS = [
         "NO RETURN, NO EXCHANGE WITHOUT BILL",
         "NO RETURN, NO EXCHANGE AFTER 3 DAYS",
         "ITEMS LIKE PIPES ARE NOT RETURNABLE OR EXCHANGEABLE",
-        "DAMAGED AND USED ITEMS OR ITEMS WITH TORN AND RIPPED PACKING WILL NOT BE ACCEPTED FOR RETURN OR EXCHANGE"
+        "DAMAGED AND USED ITEMS OR ITEMS WITH TORN AND RIPPED PACKING WILL NOT BE ACCEPTED FOR RETURN OR EXCHANGE",
+        f"RETURN FEE: A FEE OF Rs {DEFAULT_RETURN_FEE} WILL BE CHARGED FOR RETURNING THE ENTIRE INVOICE."
     ]
 
-    # NEW: Return fee settings
-    DEFAULT_RETURN_FEE = 100
-    RETURN_FEE_PER_PAGE = False
-    
+
     # Other settings
     CURRENCY_SYMBOL = "Rs"
     DATE_FORMAT = "%d/%m/%Y"
@@ -801,71 +803,64 @@ class ProfessionalInvoiceBuilder:
         """Add totals section with dynamic support for return/exchange - ONLY ON LAST PAGE"""
         if cursor is None:
             cursor = self.cursor
-        
+
         subtotal = bill_data.get('subtotal', 0)
         discount = bill_data.get('discount', 0)
         return_amount = bill_data.get('return_amount', 0)   # Negative for returns
-        exchange_amount = bill_data.get('exchange_amount', 0) # Positive for exchanges
-        return_fee = bill_data.get('return_fee', 0)         # From settings
+        exchange_amount = bill_data.get('exchange_amount', 0)  # Positive for exchanges
+        return_fee = bill_data.get('DEFAULT_RETURN_FEE', 0)         # From settings
         grand_total = bill_data.get('grand_total', subtotal)
-        
+
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        
-        # Add spacing before totals
-        block_format = self._create_block_format(
-            Qt.AlignmentFlag.AlignRight,
-            top_margin=20
-        )
+        block_format = self._create_block_format(Qt.AlignmentFlag.AlignRight, top_margin=20)
         cursor.insertBlock(block_format)
-        
+
         # --- DYNAMIC ROW CALCULATION & ORDER ---
-        # SUBTOTAL is always first, GRAND TOTAL is always last.
         rows_to_display = []
-        
+
         # 1. Always add SUBTOTAL
         rows_to_display.append(('SUBTOTAL', subtotal, 'value', False))
-        
+
         # 2. Conditionally add DISCOUNT (if not zero)
         if discount != 0:
             rows_to_display.append(('DISCOUNT', discount, 'value', False))
-        
+
         # 3. Conditionally add RETURN AMOUNT (for Return/Exchange documents)
         if return_amount != 0:
-            # Format: Label is "RETURN AMOUNT", value is negative
             rows_to_display.append(('RETURN AMOUNT', return_amount, 'return', False))
-        
+
         # 4. Conditionally add EXCHANGE AMOUNT (for Exchange documents)
         if exchange_amount != 0:
             rows_to_display.append(('EXCHANGE AMOUNT', exchange_amount, 'value', False))
-        
+
         # 5. Conditionally add RETURN FEE (KEY CHANGE: Only for Return documents)
         # Show fee only if there is an actual return amount.
         if return_amount != 0 and return_fee > 0:
             rows_to_display.append(('RETURN FEE', return_fee, 'value', False))
-        
+
         # 6. Always add GRAND TOTAL (with top margin for visual separation)
-        rows_to_display.append(('GRAND TOTAL', grand_total, 'grand', True)) # True = extra margin
-        
+        rows_to_display.append(('GRAND TOTAL', grand_total, 'grand', True))  # True = extra margin
+
         # --- CREATE THE DYNAMIC TABLE ---
         table_format = QTextTableFormat()
         table_format.setBorder(0)
         table_format.setCellSpacing(0)
         table_format.setCellPadding(2)
-        
+
         table_format.setColumnWidthConstraints([
             QTextLength(QTextLength.Type.PercentageLength, 40),
             QTextLength(QTextLength.Type.PercentageLength, 60)
         ])
-        
+
         # Create table with the exact number of rows we need
         table = cursor.insertTable(len(rows_to_display), 2, table_format)
-        
+
         # Format definitions
         label_format = self._create_char_format(self.config.TOTALS_LABEL_FONT_SIZE, bold=True)
         value_format = self._create_char_format(self.config.TOTALS_VALUE_FONT_SIZE)
         grand_format = self._create_char_format(self.config.GRAND_TOTAL_FONT_SIZE, bold=True)
         return_format = self._create_char_format(self.config.TOTALS_VALUE_FONT_SIZE)
-        
+
         for row_index, (label, value, style, add_top_margin) in enumerate(rows_to_display):
             # Label Cell
             cell = table.cellAt(row_index, 0).firstCursorPosition()
@@ -875,7 +870,7 @@ class ProfessionalInvoiceBuilder:
                 bottom_margin=2 if add_top_margin else 0
             ))
             cell.insertText(label, label_format)
-            
+
             # Value Cell
             cell = table.cellAt(row_index, 1).firstCursorPosition()
             cell.setBlockFormat(self._create_block_format(
@@ -883,7 +878,7 @@ class ProfessionalInvoiceBuilder:
                 top_margin=5 if add_top_margin else 0,
                 bottom_margin=2 if add_top_margin else 0
             ))
-            
+
             if style == 'grand':
                 cell.insertText(self.format_currency(value), grand_format)
             elif style == 'return':
@@ -892,7 +887,7 @@ class ProfessionalInvoiceBuilder:
                 cell.insertText(return_value, return_format)
             else:  # 'value' style
                 cell.insertText(self.format_currency(value), value_format)
-        
+
         cursor.movePosition(QTextCursor.MoveOperation.End)
         # Add separator line
         self.add_horizontal_line(cursor, line_width=76)
@@ -901,46 +896,48 @@ class ProfessionalInvoiceBuilder:
         """Add terms and conditions section - ONLY ON LAST PAGE"""
         if cursor is None:
             cursor = self.cursor
-        
+
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        
+
         # Add spacing before terms
         block_format = self._create_block_format(
             Qt.AlignmentFlag.AlignLeft,
             top_margin=5
         )
         cursor.insertBlock(block_format)
-        
+
         # Title
         title_format = self._create_char_format(self.config.TERMS_TITLE_FONT_SIZE, bold=True)
         cursor.insertText("TERMS & CONDITIONS\n", title_format)
-        
+
         # Terms list
         terms_format = self._create_char_format(self.config.TERMS_TEXT_FONT_SIZE)
-        
-        # Start with the base terms
+
+        # Start with the base terms from config
         terms_to_display = self.config.TERMS_AND_CONDITIONS.copy()
-        
-        # Add return fee term if applicable (from bill_data)
-        if bill_data and 'return_fee_amount' in bill_data and bill_data['return_fee_amount'] > 0:
+
+        # --- DYNAMICALLY ADD RETURN FEE NOTICE ---
+        # Check if a return fee is set in this invoice's data
+        if bill_data and bill_data.get('return_fee', 0) > 0:
             fee_type = bill_data.get('return_fee_type', 'Flat')
-            fee_amount = bill_data['return_fee_amount']
-            
+            fee_amount = bill_data['return_fee']
+
             if fee_type == 'Per Page':
                 terms_to_display.append(f"RETURN FEE: A fee of Rs {fee_amount} per page will be charged for returns on invoices exceeding one page.")
             else:
                 terms_to_display.append(f"RETURN FEE: A fee of Rs {fee_amount} will be charged for returning the entire invoice.")
-        
+        # -----------------------------------------
+
         for term in terms_to_display:
             cursor.insertText(f"• {term}\n", terms_format)
-        
+
         # Thank you message
         block_format = self._create_block_format(
             Qt.AlignmentFlag.AlignCenter,
             top_margin=15
         )
         cursor.insertBlock(block_format)
-        
+
         thank_format = self._create_char_format(
             self.config.THANK_YOU_FONT_SIZE,
             bold=True,
@@ -948,14 +945,14 @@ class ProfessionalInvoiceBuilder:
             color=self.config.THANK_YOU_COLOR
         )
         cursor.insertText("THANK YOU FOR YOUR BUSINESS WITH US!", thank_format)
-        
+
         # Software note
         block_format = self._create_block_format(
             Qt.AlignmentFlag.AlignCenter,
             top_margin=5
         )
         cursor.insertBlock(block_format)
-        
+
         software_format = self._create_char_format(7, color=self.config.FOOTER_COLOR)
         cursor.insertText("Invoice generated by ToolTrek Sales System", software_format)
     
