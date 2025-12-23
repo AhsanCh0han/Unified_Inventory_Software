@@ -78,7 +78,8 @@ class InvoiceConfig:
     # Colors
     FOOTER_COLOR = QColor(128, 128, 128)
     THANK_YOU_COLOR = QColor(128, 128, 128)
-    
+
+    # Terms and conditions
     # Terms and conditions
     TERMS_AND_CONDITIONS = [
         "NO RETURN, NO EXCHANGE WITHOUT BILL",
@@ -86,6 +87,10 @@ class InvoiceConfig:
         "ITEMS LIKE PIPES ARE NOT RETURNABLE OR EXCHANGEABLE",
         "DAMAGED AND USED ITEMS OR ITEMS WITH TORN AND RIPPED PACKING WILL NOT BE ACCEPTED FOR RETURN OR EXCHANGE"
     ]
+
+    # NEW: Return fee settings
+    DEFAULT_RETURN_FEE = 100
+    RETURN_FEE_PER_PAGE = False
     
     # Other settings
     CURRENCY_SYMBOL = "Rs"
@@ -793,12 +798,14 @@ class ProfessionalInvoiceBuilder:
             self.add_item_row_to_table(item, self.current_serial)
     
     def add_totals_section(self, bill_data, cursor=None):
-        """Add totals section (SUBTOTAL, DISCOUNT, GRAND TOTAL) - ONLY ON LAST PAGE"""
+        """Add totals section with support for return fee - ONLY ON LAST PAGE"""
         if cursor is None:
             cursor = self.cursor
         
         subtotal = bill_data.get('subtotal', 0)
         discount = bill_data.get('discount', 0)
+        return_amount = bill_data.get('return_amount', 0)  # NEW: Get return amount
+        return_fee = bill_data.get('return_fee', 0)        # NEW: Get return fee
         grand_total = bill_data.get('grand_total', subtotal)
         
         cursor.movePosition(QTextCursor.MoveOperation.End)
@@ -809,6 +816,15 @@ class ProfessionalInvoiceBuilder:
             top_margin=20
         )
         cursor.insertBlock(block_format)
+        
+        # Calculate number of rows needed
+        row_count = 3  # Base: subtotal, discount, grand_total
+        
+        if return_amount != 0:
+            row_count += 1  # Add row for return amount
+        
+        if return_fee > 0:
+            row_count += 1  # Add row for return fee
         
         # Create totals table
         table_format = QTextTableFormat()
@@ -821,46 +837,86 @@ class ProfessionalInvoiceBuilder:
             QTextLength(QTextLength.Type.PercentageLength, 60)
         ])
         
-        # Create table with 3 rows
-        table = cursor.insertTable(3, 2, table_format)
+        # Create table with dynamic row count
+        table = cursor.insertTable(row_count, 2, table_format)
         
         # Format definitions
         label_format = self._create_char_format(self.config.TOTALS_LABEL_FONT_SIZE, bold=True)
         value_format = self._create_char_format(self.config.TOTALS_VALUE_FONT_SIZE)
         grand_format = self._create_char_format(self.config.GRAND_TOTAL_FONT_SIZE, bold=True)
+        return_format = self._create_char_format(self.config.TOTALS_VALUE_FONT_SIZE)  # Special format for return
+        
+        # Track current row
+        current_row = 0
         
         # SUBTOTAL row
-        cell = table.cellAt(0, 0).firstCursorPosition()
+        cell = table.cellAt(current_row, 0).firstCursorPosition()
         cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignLeft))
         cell.insertText("SUBTOTAL", label_format)
         
-        cell = table.cellAt(0, 1).firstCursorPosition()
+        cell = table.cellAt(current_row, 1).firstCursorPosition()
         cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignRight))
         cell.insertText(self.format_currency(subtotal), value_format)
+        current_row += 1
         
-        # DISCOUNT row
-        cell = table.cellAt(1, 0).firstCursorPosition()
-        cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignLeft))
-        cell.insertText("DISCOUNT", label_format)
+        # DISCOUNT row (if any)
+        if discount != 0:
+            cell = table.cellAt(current_row, 0).firstCursorPosition()
+            cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignLeft))
+            cell.insertText("DISCOUNT", label_format)
+            
+            cell = table.cellAt(current_row, 1).firstCursorPosition()
+            cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignRight))
+            cell.insertText(self.format_currency(discount), value_format)
+            current_row += 1
         
-        cell = table.cellAt(1, 1).firstCursorPosition()
-        cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignRight))
-        cell.insertText(self.format_currency(discount), value_format)
+        # RETURN AMOUNT row (if any)
+        if return_amount != 0:
+            cell = table.cellAt(current_row, 0).firstCursorPosition()
+            cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignLeft))
+            cell.insertText("RETURN AMOUNT", label_format)
+            
+            cell = table.cellAt(current_row, 1).firstCursorPosition()
+            cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignRight))
+            
+            # Display negative return amount
+            return_value = f"-{self.format_currency(abs(return_amount))}"
+            cell.insertText(return_value, return_format)
+            current_row += 1
+        
+        # RETURN FEE row (if any)
+        if return_fee > 0:
+            cell = table.cellAt(current_row, 0).firstCursorPosition()
+            cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignLeft))
+            cell.insertText("RETURN FEE", label_format)
+            
+            cell = table.cellAt(current_row, 1).firstCursorPosition()
+            cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignRight))
+            cell.insertText(self.format_currency(return_fee), value_format)
+            current_row += 1
         
         # GRAND TOTAL row
-        cell = table.cellAt(2, 0).firstCursorPosition()
-        cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignLeft, top_margin=5, bottom_margin=2))
+        cell = table.cellAt(current_row, 0).firstCursorPosition()
+        cell.setBlockFormat(self._create_block_format(
+            Qt.AlignmentFlag.AlignLeft, 
+            top_margin=5, 
+            bottom_margin=2
+        ))
         cell.insertText("GRAND TOTAL", grand_format)
         
-        cell = table.cellAt(2, 1).firstCursorPosition()
-        cell.setBlockFormat(self._create_block_format(Qt.AlignmentFlag.AlignRight, top_margin=5, bottom_margin=2))
+        cell = table.cellAt(current_row, 1).firstCursorPosition()
+        cell.setBlockFormat(self._create_block_format(
+            Qt.AlignmentFlag.AlignRight, 
+            top_margin=5, 
+            bottom_margin=2
+        ))
         cell.insertText(self.format_currency(grand_total), grand_format)
         
         cursor.movePosition(QTextCursor.MoveOperation.End)
-                # Add separator line between bill info and invoice table
+        # Add separator line between bill info and invoice table
         self.add_horizontal_line(cursor, line_width=76)
     
-    def add_terms_and_conditions(self, cursor=None):
+    def add_terms_and_conditions(self, bill_data=None, cursor=None):
         """Add terms and conditions section - ONLY ON LAST PAGE"""
         if cursor is None:
             cursor = self.cursor
@@ -881,7 +937,20 @@ class ProfessionalInvoiceBuilder:
         # Terms list
         terms_format = self._create_char_format(self.config.TERMS_TEXT_FONT_SIZE)
         
-        for term in self.config.TERMS_AND_CONDITIONS:
+        # Start with the base terms
+        terms_to_display = self.config.TERMS_AND_CONDITIONS.copy()
+        
+        # Add return fee term if applicable (from bill_data)
+        if bill_data and 'return_fee_amount' in bill_data and bill_data['return_fee_amount'] > 0:
+            fee_type = bill_data.get('return_fee_type', 'Flat')
+            fee_amount = bill_data['return_fee_amount']
+            
+            if fee_type == 'Per Page':
+                terms_to_display.append(f"RETURN FEE: A fee of Rs {fee_amount} per page will be charged for returns on invoices exceeding one page.")
+            else:
+                terms_to_display.append(f"RETURN FEE: A fee of Rs {fee_amount} will be charged for returning the entire invoice.")
+        
+        for term in terms_to_display:
             cursor.insertText(f"• {term}\n", terms_format)
         
         # Thank you message
