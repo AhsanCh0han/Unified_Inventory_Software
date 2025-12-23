@@ -89,24 +89,24 @@ class EnhancedIntegratedPrintingSystem:
         """Prepare bill data in the format required by print.py"""
         if not sale_window.sale_items:
             return None
-        
+
         # Calculate totals
         subtotal = sum(item['total_price'] for item in sale_window.sale_items)
         discount = sale_window.discount_input.value()
         discount_type = sale_window.discount_type.currentText()
         tax_rate = sale_window.tax_spinbox.value()
-        
+
         if discount_type == "Percentage":
             discount_amount = subtotal * (discount / 100)
         else:
             discount_amount = discount
-        
+
         tax_amount = subtotal * (tax_rate / 100)
         grand_total = max(0, subtotal - discount_amount + tax_amount)
-        
+
         # Get current datetime
         now = datetime.now()
-        
+
         items = []
         for item in sale_window.sale_items:
             items.append({
@@ -115,7 +115,11 @@ class EnhancedIntegratedPrintingSystem:
                 'price': item['price'],
                 'total': item['total_price']
             })
-        
+
+        # --- FIX: Get return fee data from the UI ---
+        return_fee_amount = sale_window.return_fee_input.value()
+        return_fee_type = sale_window.return_fee_type.currentText()
+
         # Return bill data with all required fields
         return {
             'bill_number': sale_window.bill_number,
@@ -123,12 +127,18 @@ class EnhancedIntegratedPrintingSystem:
             'items': items,
             'subtotal': subtotal,
             'discount': discount_amount,
-            'discount_type': 'Amount',  # Always use Amount for consistency
+            'discount_type': 'Amount',
             'tax_rate': tax_rate,
             'grand_total': grand_total,
             'date': now.strftime("%d/%m/%Y"),
-            'time': now.strftime("%I:%M %p")
-        }
+            'time': now.strftime("%I:%M %p"),
+            # Include fee for terms, but NOT return_amount/exchange_amount for a new sale
+            'return_fee': return_fee_amount,
+            'return_fee_type': return_fee_type,
+            # These should be 0 or not present for a new sale invoice
+            'return_amount': 0,
+            'exchange_amount': 0
+            }
     
     @staticmethod
     def print_invoice(sale_window):
