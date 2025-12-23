@@ -322,7 +322,11 @@ class EnhancedDatabaseManager:
             'auto_increment': True,
             'tax_rate': 0.0,
             'default_discount_type': 'Amount',
-            'default_customer': 'WALK-IN CUSTOMER'
+            'default_customer': 'WALK-IN CUSTOMER',
+            # NEW: Return fee settings
+            'default_return_fee': 100,
+            'return_fee_enabled': True,
+            'return_fee_type': 'Flat'  # Flat or PerPage
         }
         
         try:
@@ -488,7 +492,10 @@ class EnhancedDatabaseManager:
                 ('payment_method', 'TEXT'),
                 ('payment_status', 'TEXT'),
                 ('notes', 'TEXT'),
-                ('updated_at', 'TIMESTAMP')
+                ('updated_at', 'TIMESTAMP'),
+                # NEW: Return fee columns
+                ('return_fee_amount', 'REAL'),
+                ('return_fee_type', 'TEXT')
             ]
             
             for col_name, col_type in missing_columns:
@@ -795,7 +802,7 @@ class EnhancedDatabaseManager:
     
     def save_sale(self, bill_number, bill_number_numeric, customer, customer_phone, 
                   customer_address, sale_items, discount, discount_type, 
-                  tax, tax_rate, grand_total, payment_method, payment_status, notes):
+                  tax, tax_rate, grand_total, payment_method, payment_status, notes, return_fee_type, return_fee_amount):
         """Save sale with transaction and proper error handling"""
         try:
             if 'sales' not in self.connections:
@@ -822,12 +829,14 @@ class EnhancedDatabaseManager:
                     INSERT INTO sales (
                         bill_number, bill_number_numeric, customer, customer_phone, customer_address,
                         sale_date, sale_time, total_items, subtotal, discount, discount_type,
-                        tax, tax_rate, grand_total, payment_method, payment_status, notes
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        tax, tax_rate, grand_total, payment_method, payment_status, notes,
+                        return_fee_type, return_fee_amount
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     bill_number, bill_number_numeric, customer, customer_phone, customer_address,
                     sale_date, sale_time, len(sale_items), subtotal, discount, discount_type,
-                    tax, tax_rate, grand_total, payment_method, payment_status, notes
+                    tax, tax_rate, grand_total, payment_method, payment_status, notes,
+                    return_fee_type, return_fee_amount
                 ))
                 
                 sale_id = cursor.lastrowid
@@ -1501,8 +1510,31 @@ class EnhancedSalesWindow(QMainWindow):
         discount_layout.addWidget(self.discount_input)
         
         sales_layout.addLayout(discount_layout, 1, 1, 1, 3)
-        
-        sales_layout.addWidget(QLabel("Grand Total:"), 2, 0)
+
+        # Add Return Fee section (NEW)
+        sales_layout.addWidget(QLabel("Return Fee:"), 2, 0)
+        return_fee_layout = QHBoxLayout()
+
+        self.return_fee_type = QComboBox()
+        self.return_fee_type.addItems(["Flat", "Per Page"])
+        self.return_fee_type.setFixedHeight(24)
+        self.return_fee_type.setFixedWidth(90)
+        self.return_fee_type.currentTextChanged.connect(self.on_return_fee_type_changed)
+        return_fee_layout.addWidget(self.return_fee_type)
+
+        self.return_fee_input = QDoubleSpinBox()
+        self.return_fee_input.setMinimum(0)
+        self.return_fee_input.setMaximum(1000)
+        self.return_fee_input.setValue(self.db_manager.settings.get('default_return_fee', 100))
+        self.return_fee_input.setFixedHeight(24)
+        self.return_fee_input.setFixedWidth(100)
+        self.return_fee_input.valueChanged.connect(self.calculate_totals)
+        return_fee_layout.addWidget(self.return_fee_input)
+
+        sales_layout.addLayout(return_fee_layout, 2, 1, 1, 3)
+
+        # Move Grand Total to row 3 (was row 2)
+        sales_layout.addWidget(QLabel("Grand Total:"), 3, 0)
         self.grand_total_label = QLabel("Rs 0.00")
         self.grand_total_label.setStyleSheet("""
             font-size: 16px; 
@@ -1510,7 +1542,7 @@ class EnhancedSalesWindow(QMainWindow):
             color: #e74c3c;
             padding: 3px;
         """)
-        sales_layout.addWidget(self.grand_total_label, 2, 1, 1, 3)
+        sales_layout.addWidget(self.grand_total_label, 3, 1, 1, 3)
         
         self.profit_summary = QGroupBox("Profit Summary")
         self.profit_summary.setMaximumHeight(130)
@@ -1610,6 +1642,30 @@ class EnhancedSalesWindow(QMainWindow):
         summary_layout.addLayout(action_layout, 30)
         
         return summary_frame
+
+    def on_return_fee_type_changed(self, fee_type):
+        """Handle return fee type change"""
+        if fee_type == "Per Page":
+            self.return_fee_input.setSuffix(" /page")
+            # Load per page fee from settings if available
+            per_page_fee = self.db_manager.settings.get('return_fee_per_page', 50)
+            self.return_fee_input.setValue(per_page_fee)
+        else:
+            self.return_fee_input.setSuffix("")
+            # Load flat fee from settings
+            flat_fee = self.db_manager.settings.get('default_return_fee', 100)
+            self.return_fee_input.setValue(flat_fee)
+
+    def update_return_fee_from_settings(self):
+        """Update return fee input from saved settings"""
+        settings = self.db_manager.settings
+        fee_type = settings.get('return_fee_type', 'Flat')
+        self.return_fee_type.setCurrentText(fee_type)
+        
+        if fee_type == 'Per Page':
+            self.return_fee_input.setValue(settings.get('return_fee_per_page', 50))
+        else:
+            self.return_fee_input.setValue(settings.get('default_return_fee', 100))
     
     def setup_status_bar(self):
         self.status_bar = QStatusBar()
@@ -2265,6 +2321,11 @@ class EnhancedSalesWindow(QMainWindow):
             customer = "WALK-IN CUSTOMER"
         
         # Save to database
+        # Get return fee settings
+        return_fee_type = self.return_fee_type.currentText()
+        return_fee_amount = self.return_fee_input.value()
+
+        # Save to database
         try:
             success, message = self.db_manager.save_sale(
                 self.bill_number,
@@ -2280,9 +2341,10 @@ class EnhancedSalesWindow(QMainWindow):
                 grand_total,
                 "Cash",  # Default payment method
                 "Paid",  # Default payment status
-                ""  # Notes
+                "",  # Notes
+                return_fee_type,   # NEW: Return fee type
+                return_fee_amount  # NEW: Return fee amount
             )
-            
             if success:
                 # Verify the sale was saved
                 if self.verify_sale_saved(self.bill_number):
@@ -2397,6 +2459,14 @@ class EnhancedSalesWindow(QMainWindow):
             discount = subtotal * (self.discount_input.value() / 100)
         
         tax = subtotal * (self.tax_spinbox.value() / 100)
+        # Show return fee in status bar for reference
+        return_fee = self.return_fee_input.value()
+        fee_type = self.return_fee_type.currentText()
+        if return_fee > 0:
+            if fee_type == "Per Page":
+                self.status_label.setText(f"Return fee: Rs{return_fee:,.2f} per page (for multi-page invoices)")
+            else:
+                self.status_label.setText(f"Return fee: Rs{return_fee:,.2f} for full invoice return")
         
         grand_total = max(0, subtotal - discount + tax)
         
