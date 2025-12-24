@@ -84,29 +84,31 @@ sys.excepthook = handle_exception
 class EnhancedIntegratedPrintingSystem:
     """Class to integrate professional printing with sales system"""
     
+# In sales.py, in the EnhancedIntegratedPrintingSystem class:
+
     @staticmethod
     def prepare_bill_data(sale_window):
         """Prepare bill data in the format required by print.py"""
         if not sale_window.sale_items:
             return None
-
+        
         # Calculate totals
         subtotal = sum(item['total_price'] for item in sale_window.sale_items)
         discount = sale_window.discount_input.value()
         discount_type = sale_window.discount_type.currentText()
         tax_rate = sale_window.tax_spinbox.value()
-
+        
         if discount_type == "Percentage":
             discount_amount = subtotal * (discount / 100)
         else:
             discount_amount = discount
-
+        
         tax_amount = subtotal * (tax_rate / 100)
         grand_total = max(0, subtotal - discount_amount + tax_amount)
-
+        
         # Get current datetime
         now = datetime.now()
-
+        
         items = []
         for item in sale_window.sale_items:
             items.append({
@@ -115,11 +117,18 @@ class EnhancedIntegratedPrintingSystem:
                 'price': item['price'],
                 'total': item['total_price']
             })
-
-        # --- FIX: Get return fee data from the UI ---
+        
+        # ========== FIX: GET RETURN FEE FROM UI ==========
+        # Get return fee from UI
         return_fee_amount = sale_window.return_fee_input.value()
         return_fee_type = sale_window.return_fee_type.currentText()
-
+        
+        # For a NEW SALE, return_amount and exchange_amount are 0
+        # They will be non-zero only for return/exchange invoices
+        return_amount = 0  # Will be negative for returns
+        exchange_amount = 0  # Will be positive for exchanges
+        # ==============================================
+        
         # Return bill data with all required fields
         return {
             'bill_number': sale_window.bill_number,
@@ -127,18 +136,18 @@ class EnhancedIntegratedPrintingSystem:
             'items': items,
             'subtotal': subtotal,
             'discount': discount_amount,
-            'discount_type': 'Amount',
+            'discount_type': 'Amount',  # Always use Amount for consistency
             'tax_rate': tax_rate,
             'grand_total': grand_total,
             'date': now.strftime("%d/%m/%Y"),
             'time': now.strftime("%I:%M %p"),
-            # Include fee for terms, but NOT return_amount/exchange_amount for a new sale
-            'return_fee': return_fee_amount,
-            'return_fee_type': return_fee_type,
-            # These should be 0 or not present for a new sale invoice
-            'return_amount': 0,
-            'exchange_amount': 0
-            }
+            # ========== FIX: ADDED FIELDS ==========
+            'return_fee': return_fee_amount,  # This should be passed
+            'return_fee_type': return_fee_type,  # This should be passed
+            'return_amount': return_amount,
+            'exchange_amount': exchange_amount
+            # =======================================
+        }
     
     @staticmethod
     def print_invoice(sale_window):
@@ -1278,11 +1287,21 @@ class EnhancedSalesWindow(QMainWindow):
         self.setup_ui()
         self.setup_shortcuts()
         self.start_timer()
+        self.load_settings()
         
         # Update datetime immediately
         self.update_datetime()
         
         QTimer.singleShot(100, lambda: self.item_id_input.setFocus())
+
+    def load_settings(self):
+        """Load return fee settings from database manager"""
+        settings = self.db_manager.settings
+        default_return_fee = settings.get('default_return_fee', 100)
+        
+        # Set the initial value of return fee input
+        self.return_fee_input.setValue(default_return_fee)
+        self.return_fee_type.setCurrentText(settings.get('return_fee_type', 'Flat'))
     
     def load_bill_number(self):
         """Load bill number from persistent storage"""
@@ -1535,7 +1554,7 @@ class EnhancedSalesWindow(QMainWindow):
         self.return_fee_input = QDoubleSpinBox()
         self.return_fee_input.setMinimum(0)
         self.return_fee_input.setMaximum(1000)
-        self.return_fee_input.setValue(self.db_manager.settings.get('default_return_fee', 100))
+        self.return_fee_input.setValue(100)  # Set default to 100
         self.return_fee_input.setFixedHeight(24)
         self.return_fee_input.setFixedWidth(100)
         self.return_fee_input.valueChanged.connect(self.calculate_totals)
@@ -2380,7 +2399,7 @@ class EnhancedSalesWindow(QMainWindow):
                     self.bill_number_label.setText(f"Bill #: {self.bill_number}")
                     
                     # Clear for next sale
-                    self.clear_sale()
+                    self.clear_sale()# This will reset return fee to default
                 else:
                     QMessageBox.warning(self, "Verification Failed", 
                                       "Sale was not properly saved to database!")
@@ -2445,6 +2464,7 @@ class EnhancedSalesWindow(QMainWindow):
             self.update_items_count()
             self.status_label.setText("Sale cleared")
             self.item_id_input.setFocus()
+            self.load_settings()
     
     def clear_inputs(self):
         self.item_id_input.clear()
