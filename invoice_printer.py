@@ -80,17 +80,13 @@ class InvoiceConfig:
     THANK_YOU_COLOR = QColor(128, 128, 128)
     # NEW: Return fee settings
 
-
-    DEFAULT_RETURN_FEE = 100
-    RETURN_FEE_PER_PAGE = False
     
     # Terms and conditions
     TERMS_AND_CONDITIONS = [
         "NO RETURN, NO EXCHANGE WITHOUT BILL",
         "NO RETURN, NO EXCHANGE AFTER 3 DAYS",
         "ITEMS LIKE PIPES ARE NOT RETURNABLE OR EXCHANGEABLE",
-        "DAMAGED AND USED ITEMS OR ITEMS WITH TORN AND RIPPED PACKING WILL NOT BE ACCEPTED FOR RETURN OR EXCHANGE",
-        f"RETURN FEE: A FEE OF Rs {DEFAULT_RETURN_FEE} WILL BE CHARGED FOR RETURNING THE ENTIRE INVOICE."
+        "DAMAGED AND USED ITEMS OR ITEMS WITH TORN AND RIPPED PACKING WILL NOT BE ACCEPTED FOR RETURN OR EXCHANGE"
     ]
 
 
@@ -485,7 +481,7 @@ class ProfessionalInvoiceBuilder:
         cursor.insertText(contact_text, contact_format)
         
         # Add separator line after shop info
-        self.add_horizontal_line(cursor, thickness=0.8, margin_top=5, margin_bottom=5, line_width=60)
+        self.add_horizontal_line(cursor, thickness=0.8, margin_top=5, margin_bottom=5, line_width=66)
     
     def add_bill_info(self, bill_data, cursor=None):
         """Add bill information (NAME, BILL #, DATE)"""
@@ -547,7 +543,7 @@ class ProfessionalInvoiceBuilder:
         cursor.movePosition(QTextCursor.MoveOperation.End)
         
         # Add separator line between bill info and invoice table
-        self.add_horizontal_line(cursor, thickness=0.6, margin_top=8, margin_bottom=8, line_width=75)  # Reduced margins
+        self.add_horizontal_line(cursor, thickness=0.6, margin_top=8, margin_bottom=8, line_width=79)  # Reduced margins
     
     def start_items_table(self, cursor=None):
         """Start a continuous table for items - FIXED to prevent header wrapping"""
@@ -890,8 +886,10 @@ class ProfessionalInvoiceBuilder:
 
         cursor.movePosition(QTextCursor.MoveOperation.End)
         # Add separator line
-        self.add_horizontal_line(cursor, line_width=76)
+        self.add_horizontal_line(cursor, line_width=79)
     
+# In invoice_printer.py, update the add_terms_and_conditions method:
+
     def add_terms_and_conditions(self, bill_data=None, cursor=None):
         """Add terms and conditions section - ONLY ON LAST PAGE"""
         if cursor is None:
@@ -921,11 +919,11 @@ class ProfessionalInvoiceBuilder:
         if bill_data and bill_data.get('return_fee', 0) > 0:
             fee_type = bill_data.get('return_fee_type', 'Flat')
             fee_amount = bill_data['return_fee']
-
+            
             if fee_type == 'Per Page':
-                terms_to_display.append(f"RETURN FEE: A fee of Rs {fee_amount} per page will be charged for returns on invoices exceeding one page.")
+                terms_to_display.append(f"RETURN FEE: A FEE OF Rs {fee_amount:,.0f} PER PAGE WILL BE CHARGED FOR RETURNS ON INVOICES EXCEEDING ONE PAGE.")
             else:
-                terms_to_display.append(f"RETURN FEE: A fee of Rs {fee_amount} will be charged for returning the entire invoice.")
+                terms_to_display.append(f"RETURN FEE: A FEE OF Rs {fee_amount:,.0f} WILL BE CHARGED FOR RETURNING THE ENTIRE INVOICE.")
         # -----------------------------------------
 
         for term in terms_to_display:
@@ -1013,7 +1011,7 @@ class ProfessionalInvoiceBuilder:
                 # Add separator line before totals
                 self.add_horizontal_line(self.cursor, thickness=0.8, margin_top=15, margin_bottom=10, line_width=76)
                 self.add_totals_section(bill_data)
-                self.add_terms_and_conditions()
+                self.add_terms_and_conditions(bill_data)
         
         return self.doc
 
