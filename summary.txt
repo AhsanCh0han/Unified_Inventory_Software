@@ -1,0 +1,218 @@
+=== UNIFIED INVENTORY SOFTWARE - PROJECT SUMMARY ===
+Generated: 2025-12-25 14:10:57
+Use: Upload this file to new DeepSeek chats for immediate context.
+
+================================================================================
+1. PROJECT OVERVIEW & CORE PRINCIPLES
+================================================================================
+
+PROJECT NAME: Unified Inventory Software
+STATUS: Active Development Phase 2 (Return System Enhancement)
+
+CORE ARCHITECTURAL PRINCIPLES (From readme.txt):
+- Original sales invoices are IMMUTABLE (never modified)
+- Returns/exchanges create new linked records (RTN-INV-XXXXX-1, EX-INV-XXXXX-1)
+- Net Sale is a CALCULATED state, not a stored transaction
+- Single Sales Ledger (sales_ledger.py) as the one source of truth
+- Professional, audit-safe design with no duplicate logic
+
+DATABASE STRATEGY: SEPARATE DATABASES FOR FAULT TOLERANCE
+- sales.db        : Original sales transactions only
+- returns.db      : Dedicated return/exchange records (to be created)
+- inventory.db    : General inventory stock
+- bearings.db     : Bearing-specific inventory
+- seals.db        : Seal-specific inventory
+- config.db       : Shared system configuration (to be created)
+
+================================================================================
+2. CURRENT MODULE STATUS & CRITICAL GAPS
+================================================================================
+
+✓ SALES.PY (Core Point-of-Sale)
+   Status: Functional foundation
+   Purpose: Original sale entry, generates INV-XXXXX numbers
+   Strengths: Professional database manager, multi-db search, printing integration
+   CRITICAL BUG: Does NOT decrement inventory stock after sale
+   Missing: No return/exchange logic (by design)
+
+⏳ SALES_RETURN.PY (Return/Exchange System)
+   Status: Partial implementation, needs enhancement
+   Purpose: Process returns against original invoices, generates RTN-INV-XXXXX-1
+   Existing: Professional UI, return dialog, pending returns list
+   CRITICAL GAPS:
+       1. No return fee system implementation
+       2. "Exchange Mode" button has no backend logic
+       3. Hardcoded database paths, no professional database manager
+       4. Inventory restocking needs to identify correct source database
+       5. No transaction safety (BEGIN/COMMIT/ROLLBACK)
+
+✓ INVOICE_PRINTER.PY (Professional Printing)
+   Status: Excellent, complete
+   Purpose: Generate A5 format invoices with smart pagination
+   Strengths: Professional formatting, continuous tables, return fee support
+   Integration: Ready for use by sales.py and sales_return.py
+
+⏳ SALES_EXCHANGE.PY
+   Status: Not yet implemented (design documented)
+   Purpose: Handle exchanges as "Return + New Sale"
+   Planned: Will generate EX-INV-XXXXX-1 numbers
+
+⏳ SALES_LEDGER.PY
+   Status: Not yet implemented (design documented)
+   Purpose: Unified view showing original sales, returns, exchanges with net calculations
+
+================================================================================
+3. DESIGN DECISIONS MADE FOR SALES_RETURN.PY ENHANCEMENT
+================================================================================
+
+KEY DECISION: Mirror sales.py's professional architecture
+
+A. NEW CLASS: ReturnDatabaseManager (to be implemented)
+   - Will manage connections to all 6 databases
+   - Load settings from config.db (return_fee, return_fee_type)
+   - Transaction-safe operations with rollback capability
+
+B. DATABASE SCHEMA FOR RETURNS.DB (to be created):
+   Tables:
+   1. returns (header info: return_number, original_sale_id, customer, fees, totals)
+   2. return_items (line items: item_id, quantity, refund amount, condition, reason)
+
+C. RETURN FEE SYSTEM DESIGN:
+   - Defaults loaded from config.db
+   - Editable per transaction in EnhancedReturnDialog
+   - Types: "Flat" (fixed amount) or "Percentage" (of refund)
+   - Displayed on printed return invoices
+
+D. INVENTORY RESTOCKING LOGIC:
+   - Must identify source database (inventory.db, bearings.db, or seals.db)
+   - Use search pattern from sales.py's search_item_by_id()
+   - Update stock with: UPDATE table SET quantity = quantity + ? WHERE item_id = ?
+
+E. PRINTING INTEGRATION:
+   - prepare_return_for_printing() must match invoice_printer.py's expected format
+   - Return invoice shows: original invoice ref, returned items, fees, net refund
+
+F. TRANSACTION SAFETY:
+   - Entire return process (save header + save items + restock inventory) must be atomic
+   - Use BEGIN TRANSACTION, COMMIT, ROLLBACK
+   - If any step fails, everything rolls back
+
+================================================================================
+4. IMMEDIATE NEXT STEPS (PRIORITY ORDER)
+================================================================================
+
+PRIORITY 1: CRITICAL BUG FIX
+   Module: sales.py
+   Task: Fix inventory update in save_sale() method
+   Code: Add inventory decrement logic after sale is saved
+
+PRIORITY 2: DATABASE INFRASTRUCTURE
+   Module: sales_return.py
+   Task: Implement ReturnDatabaseManager class with:
+         - connect_databases() for all 6 databases
+         - create_returns_database() schema
+         - create_config_database() for shared settings
+
+PRIORITY 3: RETURN FEE SYSTEM
+   Module: sales_return.py
+   Task: Enhance EnhancedReturnDialog UI to include:
+         - return_fee (QDoubleSpinBox)
+         - return_fee_type (QComboBox: "Flat"/"Percentage")
+         - Connect to settings from config.db
+
+PRIORITY 4: TRANSACTION PROCESSING
+   Module: sales_return.py
+   Task: Implement save_return_transaction() method with:
+         - BEGIN TRANSACTION
+         - Save to returns.db tables
+         - Restock inventory in correct source db
+         - Create optional negative sale record in sales.db
+         - COMMIT/ROLLBACK logic
+
+PRIORITY 5: PRINTING INTEGRATION
+   Module: sales_return.py
+   Task: Finalize prepare_return_for_printing() to match invoice_printer.py format
+
+PRIORITY 6: EXCHANGE FEATURE
+   Module: sales_exchange.py
+   Task: New module for exchange workflow (return + new sale in one transaction)
+
+================================================================================
+5. TECHNICAL DETAILS & CODE PATTERNS
+================================================================================
+
+DATABASE CONNECTION PATTERN (from sales.py):
+   db_files = dict(
+        'sales': 'sales.db',
+        'inventory': 'inventory.db',
+        'bearings': 'bearings_inventory.db',
+        'seals': 'seals.db'
+   )
+   Use: conn = sqlite3.connect(db_file); conn.row_factory = sqlite3.Row
+
+SEARCH PATTERN FOR ITEM IDENTIFICATION:
+   Follow sales.py's search_item_by_id() which tries:
+   1. inventory.db (multiple table/column name variations)
+   2. bearings.db
+   3. seals.db
+   Returns: item_id, display_name, quantity, price, cost, inventory_type, database_source
+
+RETURN INVOICE NUMBER FORMAT:
+   Pattern: RTN-INV-XXXXX-N
+   Example: RTN-INV-10001-1 (first return for invoice 10001)
+   Generation: Count existing returns for that original invoice, add 1
+
+PRINTING DATA STRUCTURE (for invoice_printer.py):
+   Required keys in bill_data dict:
+   - bill_number, customer, date, time
+   - items: list of dicts with 'description', 'qty', 'price', 'total'
+   - subtotal, return_amount, return_fee, return_fee_type, grand_total
+   - is_return: True, original_bill_number
+
+CONFIGURATION SETTINGS (for config.db):
+   Defaults:
+   - default_return_fee: 100
+   - return_fee_type: "Flat"
+   - return_fee_enabled: true
+   - shop_name, shop_address, shop_phone
+
+================================================================================
+6. KEY CHALLENGES TO RESOLVE
+================================================================================
+
+1. ITEM DATABASE IDENTIFICATION:
+   How to reliably know if item "B-12345" is in bearings.db vs inventory.db?
+   Current solution: Try each database with case-insensitive search.
+
+2. EXCHANGE WORKFLOW:
+   How to handle price differences in exchanges?
+   Design: Process as return (negative) + new sale (positive) in one transaction.
+
+3. NET CALCULATIONS IN LEDGER:
+   How to efficiently calculate: Net = Gross - Returns + Exchanges - Fees
+   Design: sales_ledger.py will query and join sales.db, returns.db, exchanges.db
+
+4. TRANSACTION ISOLATION:
+   Ensuring inventory restocking doesn't conflict with concurrent sales.
+   Solution: Keep transactions short, consider database-level locking if needed.
+
+================================================================================
+7. RECENT DISCUSSION FOCUS
+================================================================================
+
+LAST CONVERSATION TOPICS:
+- Database separation strategy (6 separate .db files)
+- ReturnDatabaseManager class design
+- Transaction safety implementation
+- Return fee UI integration
+- Context management for AI conversations
+
+CURRENT FOCUS: Implementing the professional ReturnDatabaseManager for sales_return.py
+NEXT TASK: Creating the dedicated returns.db with proper schema
+
+================================================================================
+END OF PROJECT SUMMARY
+================================================================================
+
+TO CONTINUE: When uploading this file, specify which PRIORITY (1-6) you want to work on next.
+Example: "Let's work on PRIORITY 2 - building the ReturnDatabaseManager.connect_databases() method"
